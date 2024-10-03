@@ -1,25 +1,22 @@
-# Интервал задержки между играми в секундах
+# Delay between tickets
 CHECK_INTERVAL_MIN = 4
 CHECK_INTERVAL_MAX = 8
 
-# Порог совпадения шаблона кнопки "Старт". Можно снизить, если игры не начинаются автоматически.
-THRESHOLD = 0.8
+# Play button threshold
+THRESHOLD = 0.9
 
-# Горячая клавиша для запуска/остановки скрипта
-HOTKEY = 'F6'
-
-# Ключевые слова для поиска окон с игрой
+# Window search keywords
 KEYWORDS = ["Blum", "Telegram"]
 
-# Цвета для звезд
+# Leaf colors
 TARGET_COLORS_HEX = ["#c9e100", "#bae70e"]
 
-# Ближайшие цвета для проверки области вокруг звезд
+# Close colors for checking areas outside leafs
 NEARBY_COLORS_HEX = ["#abff61", "#87ff27"]
 
-# Цвета заморозки
+# Freezer colors
 FREEZE_COLORS_HEX = ["#82dce9", "#55ccdc"]
 
-# Отступ в пикселях для проверки клика по заморозке (менять, только если эта функция работает не корректно). Для доп откладки вкл 263-264
+# Offset for freezer click (only change if not working)
 OFFSET_X = 18
 OFFSET_Y = 18
