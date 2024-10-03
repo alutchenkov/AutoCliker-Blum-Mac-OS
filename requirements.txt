@@ -1,7 +1,9 @@
+pyobjc
 numpy
 opencv-python
-keyboard
+pynput
 mss
-pygetwindow
-pywin32
-pywinauto
+keyboard
+config
+pyobjc-framework-Quartz
+pyobjc-framework-Cocoa
