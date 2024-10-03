@@ -3,45 +3,107 @@ import time
 import random
 import math
 import cv2
-import keyboard
+import pynput
 import mss
 import numpy as np
-import pygetwindow as gw
-import win32api
-import win32con
 import warnings
-from pywinauto import Application
 import config
+import Quartz
+import AppKit
 
 warnings.filterwarnings("ignore", category=UserWarning, module='pywinauto')
 
+def get_window_list():
+    window_list = []
+    window_info_list = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
+    for window_info in window_info_list:
+        window_list.append(window_info)
+    return window_list
+
 def list_windows_by_title(title_keywords):
-    windows = gw.getAllWindows()
+    all_windows = get_window_list()
     filtered_windows = []
-    for window in windows:
+    for window in all_windows:
         for keyword in title_keywords:
-            if keyword.lower() in window.title.lower():
-                filtered_windows.append((window.title, window._hWnd))
+            if keyword.lower() in window.get('kCGWindowName', 'No Title').lower():
+                filtered_windows.append((window.get('kCGWindowName', 'No Title'), window))
                 break
     return filtered_windows
 
-class Logger:
-    def __init__(self, prefix=None):
-        self.prefix = prefix
+def get_active_window_by_pid(pid):
+    # Get the list of all windows on the screen
+    options = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
+    window_list = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID)
 
-    def log(self, data: str):
-        if self.prefix:
-            print(f"{self.prefix} {data}")
-        else:
-            print(data)
+    # Filter windows by owner PID
+    windows_by_pid = [window for window in window_list if window['kCGWindowOwnerPID'] == pid]
+
+    if not windows_by_pid:
+        print(f"No windows found for PID {pid}")
+        return None
+
+    # Typically, the active window has the lowest layer value (usually 0 or 1)
+    # Sort windows by layer (lower layer indicates a window closer to the foreground)
+    active_window = min(windows_by_pid, key=lambda w: w['kCGWindowLayer'])
+
+    return active_window
+
+def scroll_window(scroll_y=0, scroll_x=0):
+    # Create a scroll event
+    scroll_event = Quartz.CGEventCreateScrollWheelEvent(
+        None,                # No source
+        Quartz.kCGScrollEventUnitPixel,  # Scroll by pixels
+        2,                   # Number of dimensions (2D: x and y)
+        scroll_y,            # Vertical scroll amount
+        scroll_x             # Horizontal scroll amount
+    )
+
+    # Post the event to the system
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, scroll_event)
+
+def move_mouse(x, y):
+    # Create a mouse move event
+    move_event = Quartz.CoreGraphics.CGEventCreateMouseEvent(
+        None,                          # No source
+        Quartz.CoreGraphics.kCGEventMouseMoved,         # Event type: mouse moved
+        (x, y),                        # Destination (x, y) coordinates
+        Quartz.CoreGraphics.kCGMouseButtonLeft          # Mouse button (left in this case)
+    )
+
+    # Post the event to the system
+    Quartz.CoreGraphics.CGEventPost(Quartz.CoreGraphics.kCGHIDEventTap, move_event)
+
+def send_global_click(x, y):
+    # Create a mouse down event at the specified (x, y) coordinates
+    mouse_down = Quartz.CoreGraphics.CGEventCreateMouseEvent(
+        None,                             # No specific event source
+        Quartz.CoreGraphics.kCGEventLeftMouseDown,         # Left mouse button down
+        (x, y),                           # Position to click
+        Quartz.CoreGraphics.kCGMouseButtonLeft             # Left mouse button
+    )
+
+    # Create a mouse up event at the same (x, y) coordinates
+    mouse_up = Quartz.CoreGraphics.CGEventCreateMouseEvent(
+        None,                             # No specific event source
+        Quartz.CoreGraphics.kCGEventLeftMouseUp,           # Left mouse button up
+        (x, y),                           # Position to release click
+        Quartz.CoreGraphics.kCGMouseButtonLeft             # Left mouse button
+    )
+
+    # Post the events to the system (global click)
+    Quartz.CoreGraphics.CGEventPost(Quartz.CoreGraphics.kCGHIDEventTap, mouse_down)
+    Quartz.CoreGraphics.CGEventPost(Quartz.CoreGraphics.kCGHIDEventTap, mouse_up)
+
+
+def get_retina_scaling_factor():
+    return 2
 
 class AutoClicker:
-    def __init__(self, hwnd, target_colors_hex, nearby_colors_hex, threshold, logger, target_percentage, collect_freeze):
-        self.hwnd = hwnd
+    def __init__(self, window, target_colors_hex, nearby_colors_hex, threshold, target_percentage, collect_freeze):
+        self.window = window
         self.target_colors_hex = target_colors_hex
         self.nearby_colors_hex = nearby_colors_hex
         self.threshold = threshold
-        self.logger = logger
         self.target_percentage = target_percentage
         self.collect_freeze = collect_freeze
         self.running = False
@@ -67,22 +129,19 @@ class AutoClicker:
     @staticmethod
     def click_at(x, y):
         try:
-            if not (0 <= x < win32api.GetSystemMetrics(0) and 0 <= y < win32api.GetSystemMetrics(1)):
-                raise ValueError(f"Координаты вне пределов экрана: ({x}, {y})")
-            win32api.SetCursorPos((x, y))
-            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, x, y, 0, 0)
-            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, x, y, 0, 0)
+            send_global_click(x, y)
         except Exception as e:
-            print(f"Ошибка при установке позиции курсора: {e}")
+            print(f"Exception while clicking: {e}")
 
-    def toggle_script(self):
-        self.running = not self.running
-        if self.running:
-            self.game_start_time = None
-            self.freeze_count = 0
-            self.logger.log('Скрипт запущен. Ищем кнопку начала игры.')
-        else:
-            self.logger.log('Скрипт остановлен.')
+    def toggle_script(self, key):
+        if key == pynput.keyboard.Key.f6:
+            self.running = not self.running
+            if self.running:
+                self.game_start_time = None
+                self.freeze_count = 0
+                print('Script started. Looking for the Play button')
+            else:
+                print('Script stopped.')
 
     def is_near_color(self, hsv_img, center, target_hsvs, radius=8):
         x, y = center
@@ -97,23 +156,25 @@ class AutoClicker:
                             return True
         return False
 
-    def check_and_click_play_button(self, sct, monitor):
+    def check_and_click_play_button(self, sct, blumWindowBounds):
         current_time = time.time()
         if current_time - self.last_check_time >= random.uniform(config.CHECK_INTERVAL_MIN, config.CHECK_INTERVAL_MAX):
             self.last_check_time = current_time
             templates = [
+                cv2.imread(os.path.join("template_png", "template_play_button2.png"), cv2.IMREAD_GRAYSCALE),
+                cv2.imread(os.path.join("template_png", "template_play_button3.png"), cv2.IMREAD_GRAYSCALE),
                 cv2.imread(os.path.join("template_png", "template_play_button.png"), cv2.IMREAD_GRAYSCALE),
                 cv2.imread(os.path.join("template_png", "template_play_button1.png"), cv2.IMREAD_GRAYSCALE)
             ]
 
             for template in templates:
                 if template is None:
-                    self.logger.log("Не удалось загрузить файл шаблона.")
+                    print("Unable to load template.")
                     continue
 
                 template_height, template_width = template.shape
 
-                img = np.array(sct.grab(monitor))
+                img = np.array(sct.grab(blumWindowBounds))
                 img_gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
 
                 res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
@@ -123,56 +184,63 @@ class AutoClicker:
 
                 if matched_points:
                     pt_x, pt_y = matched_points[0]
-                    cX = pt_x + template_width // 2 + monitor["left"]
-                    cY = pt_y + template_height // 2 + monitor["top"]
+
+                    cX = (pt_x + template_width // 2) // get_retina_scaling_factor() + blumWindowBounds["left"]
+                    cY = (pt_y + template_height // 2) // get_retina_scaling_factor() + blumWindowBounds["top"]
 
                     self.click_at(cX, cY)
-                    self.logger.log(f'Нажал на кнопку: {cX} {cY}')
+                    print(f'Button pressed: {cX} {cY}')
                     self.clicked_points.append((cX, cY))
                     self.game_start_time = time.time()
-                    self.freeze_count = 0  # Сбросить счетчик заморозок при начале новой игры
-                    break  # Остановить проверку после первого найденного совпадения
+                    self.freeze_count = 0
+                    break
 
     def click_color_areas(self):
-        app = Application().connect(handle=self.hwnd)
-        window = app.window(handle=self.hwnd)
-        window.set_focus()
+        app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(self.window.get('kCGWindowOwnerPID'))
+        if app:
+            app.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
+
+        active_window = get_active_window_by_pid(self.window.get('kCGWindowOwnerPID'))
+        bounds = active_window.get('kCGWindowBounds')
+        blumWindowBounds = {
+            "top": int(bounds.get('Y')),
+            "left": int(bounds.get('X')),
+            "width": int(bounds.get('Width')),
+            "height": int(bounds.get('Height'))
+        }
 
         with mss.mss() as sct:
-            keyboard.add_hotkey(config.HOTKEY, self.toggle_script)
-            self.logger.log(f'Нажмите {config.HOTKEY} для запуска/остановки скрипта.')
+            pynput.keyboard.Listener(on_release=self.toggle_script).start()
+            print(f'Press F6 to start/stop the script.')
 
             while True:
                 if self.running:
-                    rect = window.rectangle()
-                    monitor = {
-                        "top": rect.top,
-                        "left": rect.left,
-                        "width": rect.width(),
-                        "height": rect.height()
-                    }
-                    img = np.array(sct.grab(monitor))
+                    img = np.array(sct.grab(blumWindowBounds))
                     img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
                     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
 
                     if self.game_start_time is None:
-                        self.check_and_click_play_button(sct, monitor)
+                        # Scroll to Play button if needed
+                        move_mouse(blumWindowBounds['left'] + (blumWindowBounds['width'] / 2), blumWindowBounds['top'] + (blumWindowBounds['height'] / 2))
+                        scroll_window(-100, 0)
+                        # Wait for and click the Play button
+                        self.check_and_click_play_button(sct, blumWindowBounds)
                     elif self.is_game_over():
-                        self.logger.log('Игра окончена.')
+                        print('Game over.')
                         self.random_delay_before_restart()
                         self.game_start_time = None
                     else:
-                        self.click_on_targets(hsv, monitor, sct)
+                        self.click_on_targets(hsv, blumWindowBounds, sct)
                 time.sleep(0.1)
 
     def is_game_over(self):
-        game_duration = 30 + self.freeze_count * 3
+        game_duration = 30 + 5 + self.freeze_count * 3 # 5 seconds is added for cases when the game is loading slowly
         current_time = time.time()
         if self.game_start_time and current_time - self.game_start_time >= game_duration - 0.5:
             return True
         return False
 
-    def click_on_targets(self, hsv, monitor, sct):
+    def click_on_targets(self, hsv, blumWindowBounds, sct):
         for target_hsv in self.target_hsvs:
             lower_bound = np.array([max(0, target_hsv[0] - 1), 30, 30])
             upper_bound = np.array([min(179, target_hsv[0] + 1), 255, 255])
@@ -190,33 +258,36 @@ class AutoClicker:
                 M = cv2.moments(contour)
                 if M["m00"] == 0:
                     continue
-                cX = int(M["m10"] / M["m00"]) + monitor["left"]
-                cY = int(M["m01"] / M["m00"]) + monitor["top"]
+                cX = int(M["m10"] / M["m00"])
+                cY = int(M["m01"] / M["m00"])
 
-                if not self.is_near_color(hsv, (cX - monitor["left"], cY - monitor["top"]), self.nearby_hsvs):
+                if not self.is_near_color(hsv, (cX, cY), self.nearby_hsvs):
                     continue
+
+                cX = cX // get_retina_scaling_factor() + blumWindowBounds["left"]
+                cY = cY // get_retina_scaling_factor() + blumWindowBounds["top"]
 
                 if any(math.sqrt((cX - px) ** 2 + (cY - py) ** 2) < 35 for px, py in self.clicked_points):
                     continue
-                cY += 5
+                #cY += 3
                 self.click_at(cX, cY)
-                self.logger.log(f'Нажал: {cX} {cY}')
+                #print(f'Pressed: {cX} {cY}')
                 self.clicked_points.append((cX, cY))
 
         if self.collect_freeze:
-            self.check_and_click_freeze_button(sct, monitor)
-        
+            self.check_and_click_freeze_button(sct, blumWindowBounds)
+
         self.iteration_count += 1
         if self.iteration_count >= 5:
             self.clicked_points.clear()
             self.iteration_count = 0
 
-    def check_and_click_freeze_button(self, sct, monitor):
+    def check_and_click_freeze_button(self, sct, blumWindowBounds):
         freeze_hsvs = [self.hex_to_hsv(color) for color in config.FREEZE_COLORS_HEX]
         current_time = time.time()
         if current_time - self.last_freeze_check_time >= 1 and current_time >= self.freeze_cooldown_time:
             self.last_freeze_check_time = current_time
-            img = np.array(sct.grab(monitor))
+            img = np.array(sct.grab(blumWindowBounds))
             img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
             hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
             for freeze_hsv in freeze_hsvs:
@@ -232,48 +303,42 @@ class AutoClicker:
                     M = cv2.moments(contour)
                     if M["m00"] == 0:
                         continue
-                    cX = int(M["m10"] / M["m00"]) + monitor["left"]
-                    cY = int(M["m01"] / M["m00"]) + monitor["top"]
+                    cX = int(M["m10"] / M["m00"]) // get_retina_scaling_factor() + blumWindowBounds["left"]
+                    cY = int(M["m01"] / M["m00"]) // get_retina_scaling_factor() + blumWindowBounds["top"]
 
                     self.click_at(cX, cY)
-                    self.logger.log(f'Нажал на заморозку: {cX} {cY}')
-                    self.freeze_cooldown_time = time.time() + 4  # Установить паузу на 4 секунды для поиска заморозок
+                    print(f'Freezer pressed: {cX} {cY}')
+                    self.freeze_cooldown_time = time.time() + 4  # Don't click freezers next 4 seconds
                     self.freeze_count += 1
 
-                    # Проверка цвета пикселя через 1 секунду после клика
+                    # Check pixel color in 1s after freezer click
                     time.sleep(1)
 
-                    img_check = np.array(sct.grab(monitor))
+                    img_check = np.array(sct.grab(blumWindowBounds))
                     img_bgr_check = cv2.cvtColor(img_check, cv2.COLOR_BGRA2BGR)
                     hsv_check = cv2.cvtColor(img_bgr_check, cv2.COLOR_BGR2HSV)
 
-                    right_bottom_x = monitor["width"] - config.OFFSET_X
-                    right_bottom_y = monitor["height"] - config.OFFSET_Y
+                    right_bottom_x = blumWindowBounds["width"] - config.OFFSET_X
+                    right_bottom_y = blumWindowBounds["height"] - config.OFFSET_Y
 
                     if right_bottom_x >= img_check.shape[1] or right_bottom_y >= img_check.shape[0]:
-                        self.logger.log('Ошибка: правый нижний угол выходит за пределы изображения')
+                        print('Out of dimensions')
                         return
 
                     pixel_hsv = hsv_check[right_bottom_y, right_bottom_x]
 
-                    # Вывод цвета пикселя в консоль
-                    # self.logger.log(f'Цвет пикселя в правом нижнем углу: {pixel_hsv}')
-
-                    # Подсветка пикселя (закомментировано, включить для отладки)
-                    # cv2.circle(img_bgr_check, (right_bottom_x, right_bottom_y), 5, (0, 0, 255), 2)
-                    # cv2.imwrite('pixel_check.png', img_bgr_check)
-
-                    # Проверка на черный цвет
+                    # Check for black color
                     if np.array_equal(pixel_hsv, [0, 0, 0]):
                         self.freeze_count -= 1
-                        self.logger.log('Ошибка: ложный клик по заморозке')
+                        print('Incorrect freezer click')
 
                     return
 
     def random_delay_before_restart(self):
         delay = random.uniform(config.CHECK_INTERVAL_MIN, config.CHECK_INTERVAL_MAX)
-        self.logger.log(f'Задержка перед перезапуском: {delay:.2f} секунд.')
+        print(f'Restart delay: {delay:.2f}s')
         time.sleep(delay)
+
 
 if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -282,51 +347,46 @@ if __name__ == "__main__":
     windows = list_windows_by_title(config.KEYWORDS)
 
     if not windows:
-        print("Нет окон, содержащих указанные ключевые слова Blum или Telegram.")
+        print("No windows with Telegram text in their names")
         exit()
 
-    print("Доступные окна для выбора:")
-    for i, (title, hwnd) in enumerate(windows):
+    print("Available windows:")
+    for i, (title, window) in enumerate(windows):
         print(f"{i + 1}: {title}")
 
-    choice = int(input("Введите номер окна, в котором открыт бот Blum: ")) - 1
+    choice = int(input("Start the Blum bot and choose its Telegram window here: ")) - 1
     if choice < 0 or choice >= len(windows):
-        print("Неверный выбор.")
+        print("Incorrect choice.")
         exit()
 
-    hwnd = windows[choice][1]
+    window = windows[choice][1]
 
     while True:
         try:
-            target_percentage = input("Введите значение от 0 до 1 для рандомизации прокликивания звезд, где 1 означает сбор всех звезд. (Выбор величины зависит от множества факторов: размера экрана, окна и т.д.) Я выбираю значения 0.04 - 0.06 для сбора около 140-150 звезд. Вам необходимо самостоятельно подобрать необходимое значение: ")
+            target_percentage = input(
+                "Type in a decimal value between 0 and 1 where 1 is clicking all leafs: ")
             target_percentage = target_percentage.replace(',', '.')
             target_percentage = float(target_percentage)
             if 0 <= target_percentage <= 1:
                 break
             else:
-                print("Пожалуйста, введите значение от 0 до 1.")
+                print("Please provide value between 0 and 1.")
         except ValueError:
-            print("Неверный формат. Пожалуйста, введите число.")
+            print("Please provide a number.")
 
     while True:
         try:
-            collect_freeze = int(input("Кликать заморозку? 1 - ДА, 2 - НЕТ: "))
+            collect_freeze = int(input("Click freezers? 1 - Yes, 2 - No: "))
             if collect_freeze in [1, 2]:
                 collect_freeze = (collect_freeze == 1)
                 break
             else:
-                print("Пожалуйста, введите 1 или 2.")
+                print("Please enter 1 or 2.")
         except ValueError:
-            print("Неверный формат. Пожалуйста, введите число.")
+            print("Incorrect choice. Only 1 or 2 are allowed.")
 
-    logger = Logger("[https://t.me/x_0xJohn]")
-    logger.log("Вас приветствует бесплатный скрипт - автокликер для игры Blum")
+    print("This is a Mac OS port with minor updates of original script by [https://t.me/x_0xJohn]")
 
-    auto_clicker = AutoClicker(hwnd, config.TARGET_COLORS_HEX, config.NEARBY_COLORS_HEX, config.THRESHOLD, logger, target_percentage, collect_freeze)
-    try:
-        auto_clicker.click_color_areas()
-    except Exception as e:
-        logger.log(f"Произошла ошибка: {e}")
-    for i in reversed(range(5)):
-        print(f"Скрипт завершит работу через {i}")
-        time.sleep(1)
+    auto_clicker = AutoClicker(window, config.TARGET_COLORS_HEX, config.NEARBY_COLORS_HEX, config.THRESHOLD, target_percentage, collect_freeze)
+
+    auto_clicker.click_color_areas()
