@@ -7,3 +7,4 @@ keyboard
 config
 pyobjc-framework-Quartz
 pyobjc-framework-Cocoa
+pyautogui

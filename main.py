@@ -4,6 +4,7 @@ import random
 import math
 import cv2
 import pynput
+import pyautogui
 import mss
 import numpy as np
 import warnings
@@ -20,14 +21,13 @@ def get_window_list():
         window_list.append(window_info)
     return window_list
 
-def list_windows_by_title(title_keywords):
+def get_window_by_title(title_keywords):
     all_windows = get_window_list()
     filtered_windows = []
     for window in all_windows:
         for keyword in title_keywords:
             if keyword.lower() in window.get('kCGWindowName', 'No Title').lower():
-                filtered_windows.append((window.get('kCGWindowName', 'No Title'), window))
-                break
+                filtered_windows.append(window)
     return filtered_windows
 
 def get_active_window_by_pid(pid):
@@ -99,21 +99,17 @@ def get_retina_scaling_factor():
     return 2
 
 class AutoClicker:
-    def __init__(self, window, target_colors_hex, nearby_colors_hex, threshold, target_percentage, collect_freeze):
+    def __init__(self, window, target_colors_hex, nearby_colors_hex, threshold, target_percentage):
         self.window = window
         self.target_colors_hex = target_colors_hex
         self.nearby_colors_hex = nearby_colors_hex
         self.threshold = threshold
         self.target_percentage = target_percentage
-        self.collect_freeze = collect_freeze
         self.running = False
         self.clicked_points = []
         self.iteration_count = 0
         self.last_check_time = time.time()
-        self.last_freeze_check_time = time.time()
-        self.freeze_cooldown_time = 0
         self.game_start_time = None
-        self.freeze_count = 0
         self.target_hsvs = [self.hex_to_hsv(color) for color in self.target_colors_hex]
         self.nearby_hsvs = [self.hex_to_hsv(color) for color in self.nearby_colors_hex]
 
@@ -138,7 +134,6 @@ class AutoClicker:
             self.running = not self.running
             if self.running:
                 self.game_start_time = None
-                self.freeze_count = 0
                 print('Script started. Looking for the Play button')
             else:
                 print('Script stopped.')
@@ -160,8 +155,17 @@ class AutoClicker:
         current_time = time.time()
         if current_time - self.last_check_time >= random.uniform(config.CHECK_INTERVAL_MIN, config.CHECK_INTERVAL_MAX):
             self.last_check_time = current_time
+            
+            img = np.array(sct.grab(blumWindowBounds))
+            img_gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+
+            #cv2.imshow('image',img_gray)
+            #cv2.waitKey(0)
+            
             templates = [
+                cv2.imread(os.path.join("template_png", "template_play_button5.png"), cv2.IMREAD_GRAYSCALE),
                 cv2.imread(os.path.join("template_png", "template_play_button2.png"), cv2.IMREAD_GRAYSCALE),
+                cv2.imread(os.path.join("template_png", "template_play_button4.png"), cv2.IMREAD_GRAYSCALE),
                 cv2.imread(os.path.join("template_png", "template_play_button3.png"), cv2.IMREAD_GRAYSCALE),
                 cv2.imread(os.path.join("template_png", "template_play_button.png"), cv2.IMREAD_GRAYSCALE),
                 cv2.imread(os.path.join("template_png", "template_play_button1.png"), cv2.IMREAD_GRAYSCALE)
@@ -174,9 +178,6 @@ class AutoClicker:
 
                 template_height, template_width = template.shape
 
-                img = np.array(sct.grab(blumWindowBounds))
-                img_gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
-
                 res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
                 loc = np.where(res >= self.threshold)
 
@@ -188,11 +189,11 @@ class AutoClicker:
                     cX = (pt_x + template_width // 2) // get_retina_scaling_factor() + blumWindowBounds["left"]
                     cY = (pt_y + template_height // 2) // get_retina_scaling_factor() + blumWindowBounds["top"]
 
+                    move_mouse(cX, cY)
                     self.click_at(cX, cY)
                     print(f'Button pressed: {cX} {cY}')
                     self.clicked_points.append((cX, cY))
                     self.game_start_time = time.time()
-                    self.freeze_count = 0
                     break
 
     def click_color_areas(self):
@@ -221,8 +222,11 @@ class AutoClicker:
 
                     if self.game_start_time is None:
                         # Scroll to Play button if needed
-                        move_mouse(blumWindowBounds['left'] + (blumWindowBounds['width'] / 2), blumWindowBounds['top'] + (blumWindowBounds['height'] / 2))
-                        scroll_window(-100, 0)
+                        move_x = blumWindowBounds['left'] + (blumWindowBounds['width'] // 2)
+                        move_y = blumWindowBounds['top'] + (blumWindowBounds['height'] // 2)
+                        print(f"Window center: {move_x}, {move_y}")
+                        pyautogui.moveTo(move_x, move_y)
+                        scroll_window(-200, 0)
                         # Wait for and click the Play button
                         self.check_and_click_play_button(sct, blumWindowBounds)
                     elif self.is_game_over():
@@ -234,7 +238,7 @@ class AutoClicker:
                 time.sleep(0.1)
 
     def is_game_over(self):
-        game_duration = 30 + 5 + self.freeze_count * 3 # 5 seconds is added for cases when the game is loading slowly
+        game_duration = 30 + 10 + 1 # 12 seconds for accidental freeze clicks plus 1 second is added for cases when the game is loading slowly
         current_time = time.time()
         if self.game_start_time and current_time - self.game_start_time >= game_duration - 0.5:
             return True
@@ -242,8 +246,8 @@ class AutoClicker:
 
     def click_on_targets(self, hsv, blumWindowBounds, sct):
         for target_hsv in self.target_hsvs:
-            lower_bound = np.array([max(0, target_hsv[0] - 1), 30, 30])
-            upper_bound = np.array([min(179, target_hsv[0] + 1), 255, 255])
+            lower_bound = np.array([max(0, target_hsv[0] - 2), 50, 50])
+            upper_bound = np.array([target_hsv[0], 255, 255])
             mask = cv2.inRange(hsv, lower_bound, upper_bound)
             contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -252,7 +256,7 @@ class AutoClicker:
             contours_to_click = random.sample(contours, num_to_click)
 
             for contour in reversed(contours_to_click):
-                if cv2.contourArea(contour) < 6:
+                if cv2.contourArea(contour) < 12:
                     continue
 
                 M = cv2.moments(contour)
@@ -261,78 +265,23 @@ class AutoClicker:
                 cX = int(M["m10"] / M["m00"])
                 cY = int(M["m01"] / M["m00"])
 
-                if not self.is_near_color(hsv, (cX, cY), self.nearby_hsvs):
-                    continue
+                #if not self.is_near_color(hsv, (cX, cY), self.nearby_hsvs):
+                #    continue
 
                 cX = cX // get_retina_scaling_factor() + blumWindowBounds["left"]
                 cY = cY // get_retina_scaling_factor() + blumWindowBounds["top"]
 
                 if any(math.sqrt((cX - px) ** 2 + (cY - py) ** 2) < 35 for px, py in self.clicked_points):
                     continue
-                #cY += 3
+                #cY += 5
                 self.click_at(cX, cY)
                 #print(f'Pressed: {cX} {cY}')
                 self.clicked_points.append((cX, cY))
-
-        if self.collect_freeze:
-            self.check_and_click_freeze_button(sct, blumWindowBounds)
 
         self.iteration_count += 1
         if self.iteration_count >= 5:
             self.clicked_points.clear()
             self.iteration_count = 0
-
-    def check_and_click_freeze_button(self, sct, blumWindowBounds):
-        freeze_hsvs = [self.hex_to_hsv(color) for color in config.FREEZE_COLORS_HEX]
-        current_time = time.time()
-        if current_time - self.last_freeze_check_time >= 1 and current_time >= self.freeze_cooldown_time:
-            self.last_freeze_check_time = current_time
-            img = np.array(sct.grab(blumWindowBounds))
-            img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-            hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-            for freeze_hsv in freeze_hsvs:
-                lower_bound = np.array([max(0, freeze_hsv[0] - 1), 30, 30])
-                upper_bound = np.array([min(179, freeze_hsv[0] + 1), 255, 255])
-                mask = cv2.inRange(hsv, lower_bound, upper_bound)
-                contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-                for contour in contours:
-                    if cv2.contourArea(contour) < 3:
-                        continue
-
-                    M = cv2.moments(contour)
-                    if M["m00"] == 0:
-                        continue
-                    cX = int(M["m10"] / M["m00"]) // get_retina_scaling_factor() + blumWindowBounds["left"]
-                    cY = int(M["m01"] / M["m00"]) // get_retina_scaling_factor() + blumWindowBounds["top"]
-
-                    self.click_at(cX, cY)
-                    print(f'Freezer pressed: {cX} {cY}')
-                    self.freeze_cooldown_time = time.time() + 4  # Don't click freezers next 4 seconds
-                    self.freeze_count += 1
-
-                    # Check pixel color in 1s after freezer click
-                    time.sleep(1)
-
-                    img_check = np.array(sct.grab(blumWindowBounds))
-                    img_bgr_check = cv2.cvtColor(img_check, cv2.COLOR_BGRA2BGR)
-                    hsv_check = cv2.cvtColor(img_bgr_check, cv2.COLOR_BGR2HSV)
-
-                    right_bottom_x = blumWindowBounds["width"] - config.OFFSET_X
-                    right_bottom_y = blumWindowBounds["height"] - config.OFFSET_Y
-
-                    if right_bottom_x >= img_check.shape[1] or right_bottom_y >= img_check.shape[0]:
-                        print('Out of dimensions')
-                        return
-
-                    pixel_hsv = hsv_check[right_bottom_y, right_bottom_x]
-
-                    # Check for black color
-                    if np.array_equal(pixel_hsv, [0, 0, 0]):
-                        self.freeze_count -= 1
-                        print('Incorrect freezer click')
-
-                    return
 
     def random_delay_before_restart(self):
         delay = random.uniform(config.CHECK_INTERVAL_MIN, config.CHECK_INTERVAL_MAX)
@@ -344,22 +293,19 @@ if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(current_dir)
 
-    windows = list_windows_by_title(config.KEYWORDS)
+    windows = get_window_by_title(config.KEYWORDS)
 
-    if not windows:
-        print("No windows with Telegram text in their names")
+    if len(windows) < 1:
+        print(f"No windows found containing text in their name: {config.KEYWORDS}")
         exit()
 
-    print("Available windows:")
-    for i, (title, window) in enumerate(windows):
-        print(f"{i + 1}: {title}")
-
-    choice = int(input("Start the Blum bot and choose its Telegram window here: ")) - 1
-    if choice < 0 or choice >= len(windows):
-        print("Incorrect choice.")
+    if len(windows) > 1:
+        print(f"Too many windows with one of the following in their names: {config.KEYWORDS}. Please close all Blum windows except the one you want to click through")
         exit()
 
-    window = windows[choice][1]
+    print("Blum window found")
+
+    window = windows[0]
 
     while True:
         try:
@@ -374,19 +320,8 @@ if __name__ == "__main__":
         except ValueError:
             print("Please provide a number.")
 
-    while True:
-        try:
-            collect_freeze = int(input("Click freezers? 1 - Yes, 2 - No: "))
-            if collect_freeze in [1, 2]:
-                collect_freeze = (collect_freeze == 1)
-                break
-            else:
-                print("Please enter 1 or 2.")
-        except ValueError:
-            print("Incorrect choice. Only 1 or 2 are allowed.")
-
     print("This is a Mac OS port with minor updates of original script by [https://t.me/x_0xJohn]")
 
-    auto_clicker = AutoClicker(window, config.TARGET_COLORS_HEX, config.NEARBY_COLORS_HEX, config.THRESHOLD, target_percentage, collect_freeze)
+    auto_clicker = AutoClicker(window, config.TARGET_COLORS_HEX, config.NEARBY_COLORS_HEX, config.THRESHOLD, target_percentage)
 
     auto_clicker.click_color_areas()

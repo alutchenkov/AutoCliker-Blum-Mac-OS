@@ -6,17 +6,10 @@ CHECK_INTERVAL_MAX = 8
 THRESHOLD = 0.9
 
 # Window search keywords
-KEYWORDS = ["Blum", "Telegram"]
+KEYWORDS = ["Mini App: Blum"]
 
 # Leaf colors
-TARGET_COLORS_HEX = ["#c9e100", "#bae70e"]
+TARGET_COLORS_HEX = ["#a2391c", "#d24da1"]
 
 # Close colors for checking areas outside leafs
-NEARBY_COLORS_HEX = ["#abff61", "#87ff27"]
-
-# Freezer colors
-FREEZE_COLORS_HEX = ["#82dce9", "#55ccdc"]
-
-# Offset for freezer click (only change if not working)
-OFFSET_X = 18
-OFFSET_Y = 18
+NEARBY_COLORS_HEX = ["#cf4b24", "#a13819"]
