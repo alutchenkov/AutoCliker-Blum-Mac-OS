@@ -99,10 +99,9 @@ def get_retina_scaling_factor():
     return 2
 
 class AutoClicker:
-    def __init__(self, window, target_colors_hex, nearby_colors_hex, threshold, target_percentage):
+    def __init__(self, window, target_colors_hex, threshold, target_percentage):
         self.window = window
         self.target_colors_hex = target_colors_hex
-        self.nearby_colors_hex = nearby_colors_hex
         self.threshold = threshold
         self.target_percentage = target_percentage
         self.running = False
@@ -111,7 +110,6 @@ class AutoClicker:
         self.last_check_time = time.time()
         self.game_start_time = None
         self.target_hsvs = [self.hex_to_hsv(color) for color in self.target_colors_hex]
-        self.nearby_hsvs = [self.hex_to_hsv(color) for color in self.nearby_colors_hex]
 
     @staticmethod
     def hex_to_hsv(hex_color):
@@ -138,19 +136,6 @@ class AutoClicker:
             else:
                 print('Script stopped.')
 
-    def is_near_color(self, hsv_img, center, target_hsvs, radius=8):
-        x, y = center
-        height, width = hsv_img.shape[:2]
-        for i in range(max(0, x - radius), min(width, x + radius + 1)):
-            for j in range(max(0, y - radius), min(height, y + radius + 1)):
-                distance = math.sqrt((x - i) ** 2 + (y - j) ** 2)
-                if distance <= radius:
-                    pixel_hsv = hsv_img[j, i]
-                    for target_hsv in target_hsvs:
-                        if np.allclose(pixel_hsv, target_hsv, atol=[1, 50, 50]):
-                            return True
-        return False
-
     def check_and_click_play_button(self, sct, blumWindowBounds):
         current_time = time.time()
         if current_time - self.last_check_time >= random.uniform(config.CHECK_INTERVAL_MIN, config.CHECK_INTERVAL_MAX):
@@ -159,9 +144,6 @@ class AutoClicker:
             img = np.array(sct.grab(blumWindowBounds))
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
 
-            #cv2.imshow('image',img_gray)
-            #cv2.waitKey(0)
-            
             templates = [
                 cv2.imread(os.path.join("template_png", "template_play_button5.png"), cv2.IMREAD_GRAYSCALE),
                 cv2.imread(os.path.join("template_png", "template_play_button2.png"), cv2.IMREAD_GRAYSCALE),
@@ -265,17 +247,14 @@ class AutoClicker:
                 cX = int(M["m10"] / M["m00"])
                 cY = int(M["m01"] / M["m00"])
 
-                #if not self.is_near_color(hsv, (cX, cY), self.nearby_hsvs):
-                #    continue
-
                 cX = cX // get_retina_scaling_factor() + blumWindowBounds["left"]
                 cY = cY // get_retina_scaling_factor() + blumWindowBounds["top"]
 
                 if any(math.sqrt((cX - px) ** 2 + (cY - py) ** 2) < 35 for px, py in self.clicked_points):
                     continue
-                #cY += 5
+                # on slow computers, you may need to uncomment and find best value for cY adjustment below. On Macbook Pro with Apple Silicon this offset increase isn't required at all
+                # cY += 5
                 self.click_at(cX, cY)
-                #print(f'Pressed: {cX} {cY}')
                 self.clicked_points.append((cX, cY))
 
         self.iteration_count += 1
@@ -322,6 +301,6 @@ if __name__ == "__main__":
 
     print("This is a Mac OS port with minor updates of original script by [https://t.me/x_0xJohn]")
 
-    auto_clicker = AutoClicker(window, config.TARGET_COLORS_HEX, config.NEARBY_COLORS_HEX, config.THRESHOLD, target_percentage)
+    auto_clicker = AutoClicker(window, config.TARGET_COLORS_HEX, config.THRESHOLD, target_percentage)
 
     auto_clicker.click_color_areas()
