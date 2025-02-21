@@ -9,4 +9,7 @@ THRESHOLD = 0.9
 KEYWORDS = ["Mini App: Blum"]
 
 # Leaf colors
-TARGET_COLORS_HEX = ["#a2391c", "#d24da1"]
+# Standard greenish colors
+TARGET_COLORS_HEX = ["#b5f85a"] #, "#8cd449
+# Saint Valentine's day colors
+#TARGET_COLORS_HEX = ["#a2391c", "#d24da1"]

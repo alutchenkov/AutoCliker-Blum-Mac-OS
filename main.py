@@ -7,12 +7,9 @@ import pynput
 import pyautogui
 import mss
 import numpy as np
-import warnings
 import config
 import Quartz
 import AppKit
-
-warnings.filterwarnings("ignore", category=UserWarning, module='pywinauto')
 
 def get_window_list():
     window_list = []
@@ -99,11 +96,10 @@ def get_retina_scaling_factor():
     return 2
 
 class AutoClicker:
-    def __init__(self, window, target_colors_hex, threshold, target_percentage):
+    def __init__(self, window, target_colors_hex, threshold):
         self.window = window
         self.target_colors_hex = target_colors_hex
         self.threshold = threshold
-        self.target_percentage = target_percentage
         self.running = False
         self.clicked_points = []
         self.iteration_count = 0
@@ -183,8 +179,11 @@ class AutoClicker:
         if app:
             app.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
 
-        active_window = get_active_window_by_pid(self.window.get('kCGWindowOwnerPID'))
-        bounds = active_window.get('kCGWindowBounds')
+        #active_window = get_active_window_by_pid(self.window.get('kCGWindowOwnerPID'))
+        #bounds = active_window.get('kCGWindowBounds')
+        
+        bounds = self.window.get('kCGWindowBounds')
+        
         blumWindowBounds = {
             "top": int(bounds.get('Y')),
             "left": int(bounds.get('X')),
@@ -194,7 +193,7 @@ class AutoClicker:
 
         with mss.mss() as sct:
             pynput.keyboard.Listener(on_release=self.toggle_script).start()
-            print(f'Press F6 to start/stop the script.')
+            print(f'Press F6 (or Fn+F6 on Apple keyboards) to start/stop the script.')
 
             while True:
                 if self.running:
@@ -228,14 +227,13 @@ class AutoClicker:
 
     def click_on_targets(self, hsv, blumWindowBounds, sct):
         for target_hsv in self.target_hsvs:
-            lower_bound = np.array([max(0, target_hsv[0] - 2), 50, 50])
+            lower_bound = np.array([target_hsv[0], 30, 30])
             upper_bound = np.array([target_hsv[0], 255, 255])
             mask = cv2.inRange(hsv, lower_bound, upper_bound)
             contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
             num_contours = len(contours)
-            num_to_click = int(num_contours * self.target_percentage)
-            contours_to_click = random.sample(contours, num_to_click)
+            contours_to_click = random.sample(contours, num_contours)
 
             for contour in reversed(contours_to_click):
                 if cv2.contourArea(contour) < 12:
@@ -286,21 +284,8 @@ if __name__ == "__main__":
 
     window = windows[0]
 
-    while True:
-        try:
-            target_percentage = input(
-                "Type in a decimal value between 0 and 1 where 1 is clicking all leafs: ")
-            target_percentage = target_percentage.replace(',', '.')
-            target_percentage = float(target_percentage)
-            if 0 <= target_percentage <= 1:
-                break
-            else:
-                print("Please provide value between 0 and 1.")
-        except ValueError:
-            print("Please provide a number.")
+    print("This is a simplified Mac OS port of original Windows-only script by [https://t.me/x_0xJohn]. Tested on Telegram Desktop at Macbook M1 with external 4k thunderbolt-connected display. Telegram window must be in the middle of the screen (but not full screen), while Blum window must be right in the middle of the Telegram window.")
 
-    print("This is a Mac OS port with minor updates of original script by [https://t.me/x_0xJohn]")
-
-    auto_clicker = AutoClicker(window, config.TARGET_COLORS_HEX, config.THRESHOLD, target_percentage)
+    auto_clicker = AutoClicker(window, config.TARGET_COLORS_HEX, config.THRESHOLD)
 
     auto_clicker.click_color_areas()
